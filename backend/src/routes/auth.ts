@@ -35,7 +35,6 @@ authRouter.post('/login', csrfProtection, validateAuthentication, login)
 authRouter.get('/token', refreshAccessToken)
 authRouter.post('/logout', logout)
 
-// 🔥 и тут
 authRouter.post('/register', csrfProtection, validateUserBody, register)
 
 export default authRouter
