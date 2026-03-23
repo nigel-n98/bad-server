@@ -33,6 +33,7 @@ export type ApiListResponse<Type> = {
 class Api {
     private readonly baseUrl: string
     protected options: RequestInit
+    private csrfTokenPromise: Promise<string> | null = null
 
     constructor(baseUrl: string, options: RequestInit = {}) {
         this.baseUrl = baseUrl
@@ -42,6 +43,8 @@ class Api {
             },
         }
     }
+
+    private static readonly SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
     protected handleResponse<T>(response: Response): Promise<T> {
         return response.ok
@@ -55,14 +58,45 @@ class Api {
 
     protected async request<T>(endpoint: string, options: RequestInit) {
         try {
+            const method = (options.method || 'GET').toUpperCase()
+            const headers = {
+                ...(this.options.headers as Record<string, string>),
+                ...(options.headers as Record<string, string>),
+            }
+            const isUnsafeMethod = !Api.SAFE_METHODS.has(method)
+
+            if (isUnsafeMethod) {
+                const csrfToken = await this.getCsrfToken()
+                headers['X-CSRF-Token'] = csrfToken
+                headers['CSRF-Token'] = csrfToken
+            }
+
             const res = await fetch(`${this.baseUrl}${endpoint}`, {
                 ...this.options,
                 ...options,
+                headers,
+                credentials: options.credentials ?? 'include',
             })
             return await this.handleResponse<T>(res)
         } catch (error) {
             return Promise.reject(error)
         }
+    }
+
+    private getCsrfToken = async (): Promise<string> => {
+        if (!this.csrfTokenPromise) {
+            this.csrfTokenPromise = fetch(`${this.baseUrl}/csrf-token`, {
+                method: 'GET',
+                credentials: 'include',
+            })
+                .then((res) => this.handleResponse<{ csrfToken: string }>(res))
+                .then((data) => data.csrfToken)
+                .finally(() => {
+                    this.csrfTokenPromise = null
+                })
+        }
+
+        return this.csrfTokenPromise
     }
 
     private refreshToken = () => {
@@ -293,13 +327,12 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
 
     logoutUser = () => {
         return this.request<ServerResponse<unknown>>('/auth/logout', {
-            method: 'GET',
+            method: 'POST',
             credentials: 'include',
         })
     }
 
     createProduct = (data: Omit<IProduct, '_id'>) => {
-        console.log(data)
         return this.requestWithRefresh<IProduct>('/product', {
             method: 'POST',
             body: JSON.stringify(data),

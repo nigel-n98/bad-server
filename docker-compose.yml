@@ -4,8 +4,9 @@ services:
       context: frontend
     env_file:
       - frontend/.env
+    command: sh -c "rm -rf /dist/* && cp -r /app/frontend/dist/. /dist && tail -f /dev/null"
     volumes:
-      - frontend:/app/frontend/dist
+      - frontend:/dist
 
   mongo:
     image: mongo

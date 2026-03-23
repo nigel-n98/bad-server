@@ -25,8 +25,11 @@ export default function useFormWithValidation<T>(
         const input = evt.target
         const value = input.value
         const name = input.name
-        setValues({ ...values, [name]: value })
-        setErrors({ ...errors, [name]: input.validationMessage })
+        setValues((prevValues) => ({ ...prevValues, [name]: value }))
+        setErrors((prevErrors) => ({
+            ...prevErrors,
+            [name]: input.validationMessage,
+        }))
         const form = input.closest('form')
         setIsValid(!!(form && form.checkValidity()))
     }
@@ -41,9 +44,9 @@ export default function useFormWithValidation<T>(
 
     const setValuesForm = useCallback(
         (data: Partial<T>) => {
-            setValues({ ...values, ...data })
+            setValues((prevValues) => ({ ...prevValues, ...data }))
         },
-        [values]
+        [setValues]
     )
 
     useEffect(() => {

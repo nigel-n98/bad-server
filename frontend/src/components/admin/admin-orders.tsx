@@ -119,7 +119,7 @@ export default function AdminOrders() {
             </div>
 
             <Table columns={orderColumns} data={orders}>
-                {({ rowData, columnsData }) => {
+                {({ rowData, columnsData, rowIndex }) => {
                     return (
                         <Link
                             key={rowData.key}
@@ -130,6 +130,7 @@ export default function AdminOrders() {
                             <TableRow
                                 rowData={rowData}
                                 columnsData={columnsData}
+                                rowIndex={rowIndex}
                             />
                         </Link>
                     )

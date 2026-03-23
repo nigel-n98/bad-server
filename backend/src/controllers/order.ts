@@ -1,13 +1,12 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery, Error as MongooseError, Types } from 'mongoose'
+import sanitizeHtml from 'sanitize-html'
+import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
-import User from '../models/user'
-
-// eslint-disable-next-line max-len
-// GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
+import { sanitizeObject } from '../utils/sanitize'
 
 export const getOrders = async (
     req: Request,
@@ -28,15 +27,32 @@ export const getOrders = async (
             search,
         } = req.query
 
+        const pageNumber = Number(page)
+        const limitNumber = Number(limit)
+
+        if (Number.isNaN(pageNumber) || Number.isNaN(limitNumber)) {
+            return next(new BadRequestError('Некорректные параметры пагинации'))
+        }
+
+        if (search && typeof search === 'string' && search.length > 100) {
+            return next(new BadRequestError('Слишком длинный поисковый запрос'))
+        }
+
         const filters: FilterQuery<Partial<IOrder>> = {}
 
-        if (status) {
-            if (typeof status === 'object') {
-                Object.assign(filters, status)
+        if (typeof status === 'string') {
+            const allowedStatuses = [
+                'new',
+                'cancelled',
+                'completed',
+                'delivering',
+            ]
+
+            if (!allowedStatuses.includes(status)) {
+                return next(new BadRequestError('Недопустимый статус'))
             }
-            if (typeof status === 'string') {
-                filters.status = status
-            }
+
+            filters.status = status
         }
 
         if (totalAmountFrom) {
@@ -67,6 +83,25 @@ export const getOrders = async (
             }
         }
 
+        const allowedSortFields = [
+            'createdAt',
+            'totalAmount',
+            'status',
+            'orderNumber',
+        ]
+        const allowedSortOrders = ['asc', 'desc']
+
+        if (!allowedSortFields.includes(sortField as string)) {
+            return next(new BadRequestError('Недопустимое поле сортировки'))
+        }
+
+        if (!allowedSortOrders.includes(sortOrder as string)) {
+            return next(new BadRequestError('Недопустимый порядок сортировки'))
+        }
+
+        const sort: { [key: string]: any } = {}
+        sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
+
         const aggregatePipeline: any[] = [
             { $match: filters },
             {
@@ -90,7 +125,8 @@ export const getOrders = async (
         ]
 
         if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
+            const safeSearch = escapeStringRegexp(search as string)
+            const searchRegex = new RegExp(`^${safeSearch}`, 'i')
             const searchNumber = Number(search)
 
             const searchConditions: any[] = [{ 'products.title': searchRegex }]
@@ -108,16 +144,10 @@ export const getOrders = async (
             filters.$or = searchConditions
         }
 
-        const sort: { [key: string]: any } = {}
-
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
-        }
-
         aggregatePipeline.push(
             { $sort: sort },
-            { $skip: (Number(page) - 1) * Number(limit) },
-            { $limit: Number(limit) },
+            { $skip: (pageNumber - 1) * limitNumber },
+            { $limit: limitNumber },
             {
                 $group: {
                     _id: '$_id',
@@ -133,15 +163,15 @@ export const getOrders = async (
 
         const orders = await Order.aggregate(aggregatePipeline)
         const totalOrders = await Order.countDocuments(filters)
-        const totalPages = Math.ceil(totalOrders / Number(limit))
+        const totalPages = Math.ceil(totalOrders / limitNumber)
 
         res.status(200).json({
-            orders,
+            orders: sanitizeObject(orders),
             pagination: {
                 totalOrders,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: pageNumber,
+                pageSize: limitNumber,
             },
         })
     } catch (error) {
@@ -157,55 +187,56 @@ export const getOrdersCurrentUser = async (
     try {
         const userId = res.locals.user._id
         const { search, page = 1, limit = 5 } = req.query
-        const options = {
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+
+        if (search && typeof search === 'string' && search.length > 100) {
+            return next(new BadRequestError('Слишком длинный поисковый запрос'))
         }
 
-        const user = await User.findById(userId)
-            .populate({
-                path: 'orders',
-                populate: [
-                    {
-                        path: 'products',
-                    },
-                    {
-                        path: 'customer',
-                    },
-                ],
-            })
-            .orFail(
-                () =>
-                    new NotFoundError(
-                        'Пользователь по заданному id отсутствует в базе'
-                    )
-            )
+        const pageNumber = Number(page)
+        const limitNumber = Number(limit)
 
-        let orders = user.orders as unknown as IOrder[]
+        if (Number.isNaN(pageNumber) || Number.isNaN(limitNumber)) {
+            return next(new BadRequestError('Некорректные параметры пагинации'))
+        }
+
+        const options = {
+            skip: (pageNumber - 1) * limitNumber,
+            limit: limitNumber,
+        }
+
+        const ordersRaw = await Order.find({
+            customer: userId,
+        })
+            .populate(['products', 'customer'])
+            .lean()
+
+        let orders = ordersRaw
 
         if (search) {
-            // если не экранировать то получаем Invalid regular expression: /+1/i: Nothing to repeat
-            const searchRegex = new RegExp(search as string, 'i')
+            const safeSearch = escapeStringRegexp(search as string)
+            const searchRegex = new RegExp(`^${safeSearch}`, 'i')
             const searchNumber = Number(search)
+
             const products = await Product.find({ title: searchRegex })
             const productIds = products.map((product) => product._id)
 
             orders = orders.filter((order) => {
-                // eslint-disable-next-line max-len
-                const matchesProductTitle = order.products.some((product) =>
-                    productIds.some((id) => id.equals(product._id))
+                const matchesProduct = order.products.some((product) =>
+                    productIds.some(
+                        (id) => id.toString() === product._id.toString()
+                    )
                 )
-                // eslint-disable-next-line max-len
-                const matchesOrderNumber =
+
+                const matchesNumber =
                     !Number.isNaN(searchNumber) &&
                     order.orderNumber === searchNumber
 
-                return matchesOrderNumber || matchesProductTitle
+                return matchesNumber || matchesProduct
             })
         }
 
         const totalOrders = orders.length
-        const totalPages = Math.ceil(totalOrders / Number(limit))
+        const totalPages = Math.ceil(totalOrders / limitNumber)
 
         orders = orders.slice(options.skip, options.skip + options.limit)
 
@@ -214,8 +245,8 @@ export const getOrdersCurrentUser = async (
             pagination: {
                 totalOrders,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: pageNumber,
+                pageSize: limitNumber,
             },
         })
     } catch (error) {
@@ -223,7 +254,6 @@ export const getOrdersCurrentUser = async (
     }
 }
 
-// Get order by ID
 export const getOrderByNumber = async (
     req: Request,
     res: Response,
@@ -231,19 +261,15 @@ export const getOrderByNumber = async (
 ) => {
     try {
         const order = await Order.findOne({
-            orderNumber: req.params.orderNumber,
+            orderNumber: Number(req.params.orderNumber),
         })
             .populate(['customer', 'products'])
-            .orFail(
-                () =>
-                    new NotFoundError(
-                        'Заказ по заданному id отсутствует в базе'
-                    )
-            )
-        return res.status(200).json(order)
+            .orFail(() => new NotFoundError('Заказ не найден'))
+
+        return res.status(200).json(sanitizeObject(order))
     } catch (error) {
         if (error instanceof MongooseError.CastError) {
-            return next(new BadRequestError('Передан не валидный ID заказа'))
+            return next(new BadRequestError('Невалидный ID заказа'))
         }
         return next(error)
     }
@@ -260,28 +286,21 @@ export const getOrderCurrentUserByNumber = async (
             orderNumber: req.params.orderNumber,
         })
             .populate(['customer', 'products'])
-            .orFail(
-                () =>
-                    new NotFoundError(
-                        'Заказ по заданному id отсутствует в базе'
-                    )
-            )
+            .orFail(() => new NotFoundError('Заказ не найден'))
+
         if (!order.customer._id.equals(userId)) {
-            // Если нет доступа не возвращаем 403, а отдаем 404
-            return next(
-                new NotFoundError('Заказ по заданному id отсутствует в базе')
-            )
+            return next(new NotFoundError('Заказ не найден'))
         }
-        return res.status(200).json(order)
+
+        return res.status(200).json(sanitizeObject(order))
     } catch (error) {
         if (error instanceof MongooseError.CastError) {
-            return next(new BadRequestError('Передан не валидный ID заказа'))
+            return next(new BadRequestError('Невалидный ID заказа'))
         }
         return next(error)
     }
 }
 
-// POST /product
 export const createOrder = async (
     req: Request,
     res: Response,
@@ -291,8 +310,21 @@ export const createOrder = async (
         const basket: IProduct[] = []
         const products = await Product.find<IProduct>({})
         const userId = res.locals.user._id
+
         const { address, payment, phone, total, email, items, comment } =
             req.body
+
+        const cleanAddress = sanitizeHtml(address || '')
+        const cleanComment = sanitizeHtml(comment || '')
+        const cleanEmail = sanitizeHtml(email || '')
+
+        if (!cleanEmail) {
+            return next(new BadRequestError('Некорректный email'))
+        }
+
+        if (!Array.isArray(items) || items.length === 0) {
+            return next(new BadRequestError('Некорректный список товаров'))
+        }
 
         items.forEach((id: Types.ObjectId) => {
             const product = products.find((p) => p._id.equals(id))
@@ -302,9 +334,11 @@ export const createOrder = async (
             if (product.price === null) {
                 throw new BadRequestError(`Товар с id ${id} не продается`)
             }
-            return basket.push(product)
+            basket.push(product)
         })
+
         const totalBasket = basket.reduce((a, c) => a + c.price, 0)
+
         if (totalBasket !== total) {
             return next(new BadRequestError('Неверная сумма заказа'))
         }
@@ -314,15 +348,16 @@ export const createOrder = async (
             products: items,
             payment,
             phone,
-            email,
-            comment,
+            email: cleanEmail,
+            comment: cleanComment,
             customer: userId,
-            deliveryAddress: address,
+            deliveryAddress: cleanAddress,
         })
-        const populateOrder = await newOrder.populate(['customer', 'products'])
-        await populateOrder.save()
 
-        return res.status(200).json(populateOrder)
+        const populatedOrder = await newOrder.populate(['customer', 'products'])
+        await populatedOrder.save()
+
+        return res.status(200).json(sanitizeObject(populatedOrder))
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
             return next(new BadRequestError(error.message))
@@ -331,39 +366,39 @@ export const createOrder = async (
     }
 }
 
-// Update an order
 export const updateOrder = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
+        const allowedStatuses = ['new', 'cancelled', 'completed', 'delivering']
         const { status } = req.body
+
+        if (!allowedStatuses.includes(status)) {
+            return next(new BadRequestError('Недопустимый статус'))
+        }
+
         const updatedOrder = await Order.findOneAndUpdate(
             { orderNumber: req.params.orderNumber },
             { status },
             { new: true, runValidators: true }
         )
-            .orFail(
-                () =>
-                    new NotFoundError(
-                        'Заказ по заданному id отсутствует в базе'
-                    )
-            )
+            .orFail(() => new NotFoundError('Заказ не найден'))
             .populate(['customer', 'products'])
-        return res.status(200).json(updatedOrder)
+
+        return res.status(200).json(sanitizeObject(updatedOrder))
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
             return next(new BadRequestError(error.message))
         }
         if (error instanceof MongooseError.CastError) {
-            return next(new BadRequestError('Передан не валидный ID заказа'))
+            return next(new BadRequestError('Невалидный ID заказа'))
         }
         return next(error)
     }
 }
 
-// Delete an order
 export const deleteOrder = async (
     req: Request,
     res: Response,
@@ -371,17 +406,13 @@ export const deleteOrder = async (
 ) => {
     try {
         const deletedOrder = await Order.findByIdAndDelete(req.params.id)
-            .orFail(
-                () =>
-                    new NotFoundError(
-                        'Заказ по заданному id отсутствует в базе'
-                    )
-            )
+            .orFail(() => new NotFoundError('Заказ не найден'))
             .populate(['customer', 'products'])
-        return res.status(200).json(deletedOrder)
+
+        return res.status(200).json(sanitizeObject(deletedOrder))
     } catch (error) {
         if (error instanceof MongooseError.CastError) {
-            return next(new BadRequestError('Передан не валидный ID заказа'))
+            return next(new BadRequestError('Невалидный ID заказа'))
         }
         return next(error)
     }

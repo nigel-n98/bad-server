@@ -1,7 +1,9 @@
 import { Request, Express } from 'express'
 import multer, { FileFilterCallback } from 'multer'
 import { mkdirSync } from 'fs'
-import { join } from 'path'
+import { join, extname } from 'path'
+import uniqueSlug from 'unique-slug'
+import BadRequestError from '../errors/bad-request-error'
 
 type DestinationCallback = (error: Error | null, destination: string) => void
 type FileNameCallback = (error: Error | null, filename: string) => void
@@ -29,11 +31,14 @@ const storage = multer.diskStorage({
         file: Express.Multer.File,
         cb: FileNameCallback
     ) => {
-        cb(null, file.originalname)
+        const safeExt = extname(file.originalname)
+        const safeName = uniqueSlug()
+
+        cb(null, `${safeName}${safeExt}`)
     },
 })
 
-const types = [
+const allowedTypes = [
     'image/png',
     'image/jpg',
     'image/jpeg',
@@ -46,11 +51,19 @@ const fileFilter = (
     file: Express.Multer.File,
     cb: FileFilterCallback
 ) => {
-    if (!types.includes(file.mimetype)) {
-        return cb(null, false)
+    if (!allowedTypes.includes(file.mimetype)) {
+        return cb(new BadRequestError('Недопустимый тип файла'))
     }
 
     return cb(null, true)
 }
 
-export default multer({ storage, fileFilter })
+const limits = {
+    fileSize: 2 * 1024 * 1024,
+}
+
+export default multer({
+    storage,
+    fileFilter,
+    limits,
+})
