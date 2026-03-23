@@ -27,6 +27,7 @@ services:
       context: backend
     env_file:
       - backend/.env
+    command: npm run start
     volumes:
       - ./backend/src:/app/src
       - public:/app/src/public

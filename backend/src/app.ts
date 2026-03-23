@@ -16,6 +16,10 @@ import { DB_ADDRESS, ORIGIN_ALLOW } from './config'
 const { PORT = 3000 } = process.env
 const app = express()
 
+// Учитываем прокси (nginx в docker-compose), чтобы rate-limit корректно
+// обрабатывал `X-Forwarded-For` и не падал с ValidationError.
+app.set('trust proxy', true)
+
 app.use(cookieParser())
 
 app.use(
@@ -93,8 +97,18 @@ app.get('/csrf-token', (_req, res) => {
     res.json({ csrfToken })
 })
 
+// Совместимость с тестами/клиентом: отдаём тот же CSRF-токен под ожидаемым URL.
+app.get('/auth/csrf-token', (_req, res) => {
+    const csrfToken = generateCsrfToken()
+    res.cookie('XSRF-TOKEN', csrfToken, {
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+    })
+    res.json({ csrfToken })
+})
+
 app.use((req, _res, next) => {
-    const excludedPaths = ['/csrf-token']
+    const excludedPaths = ['/csrf-token', '/auth/csrf-token']
     const isExcludedPath = excludedPaths.some(
         (excludedPath) =>
             req.path === excludedPath || req.path.startsWith(`${excludedPath}/`)
@@ -125,13 +139,27 @@ app.use(errors())
 
 app.use(errorHandler)
 
-const bootstrap = async () => {
+const startServer = () => {
+    app.listen(PORT, () => console.log(`Server started on port ${PORT}`))
+}
+
+const connectDbWithRetry = async (retriesLeft = 30) => {
     try {
         await mongoose.connect(DB_ADDRESS)
-        app.listen(PORT, () => console.log(`Server started on port ${PORT}`))
+        console.log('MongoDB connected')
     } catch (error) {
-        console.error(error)
+        console.error('MongoDB connection failed:', error)
+        if (retriesLeft <= 0) {
+            console.error('MongoDB connection retries exhausted')
+            return
+        }
+
+        // Небольшая задержка даёт MongoDB подняться в docker-compose
+        setTimeout(() => {
+            connectDbWithRetry(retriesLeft - 1).catch(() => {})
+        }, 1500)
     }
 }
 
-bootstrap()
+startServer()
+connectDbWithRetry().catch(() => {})
