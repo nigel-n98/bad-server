@@ -33,7 +33,6 @@ export type ApiListResponse<Type> = {
 class Api {
     private readonly baseUrl: string
     protected options: RequestInit
-    private csrfTokenPromise: Promise<string> | null = null
 
     constructor(baseUrl: string, options: RequestInit = {}) {
         this.baseUrl = baseUrl
@@ -68,7 +67,6 @@ class Api {
             if (isUnsafeMethod) {
                 const csrfToken = await this.getCsrfToken()
                 headers['X-CSRF-Token'] = csrfToken
-                headers['CSRF-Token'] = csrfToken
             }
 
             const res = await fetch(`${this.baseUrl}${endpoint}`, {
@@ -84,19 +82,17 @@ class Api {
     }
 
     private getCsrfToken = async (): Promise<string> => {
-        if (!this.csrfTokenPromise) {
-            this.csrfTokenPromise = fetch(`${this.baseUrl}/csrf-token`, {
-                method: 'GET',
-                credentials: 'include',
-            })
-                .then((res) => this.handleResponse<{ csrfToken: string }>(res))
-                .then((data) => data.csrfToken)
-                .finally(() => {
-                    this.csrfTokenPromise = null
-                })
+        const res = await fetch(`${this.baseUrl}/auth/csrf-token`, {
+            method: 'GET',
+            credentials: 'include',
+        })
+
+        if (!res.ok) {
+            throw new Error(`CSRF error: ${res.status}`)
         }
 
-        return this.csrfTokenPromise
+        const data = await res.json()
+        return data.csrfToken
     }
 
     private refreshToken = () => {
