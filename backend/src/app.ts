@@ -79,5 +79,15 @@ const connectDbWithRetry = async (retriesLeft = 30) => {
     }
 }
 
-startServer()
-connectDbWithRetry().catch(() => {})
+// startServer()
+// connectDbWithRetry().catch(() => {})
+const connectDb = async () => {
+    await mongoose.connect(DB_ADDRESS)
+}
+
+const init = async () => {
+    await connectDb()
+    startServer()
+}
+
+init().catch(() => {})
