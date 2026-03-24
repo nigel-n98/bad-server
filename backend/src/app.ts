@@ -26,7 +26,12 @@ const limiter = rateLimit({
     legacyHeaders: false,
 })
 
-app.use(limiter)
+app.use((req, res, next) => {
+    if (req.path === '/auth/csrf-token') {
+        return next()
+    }
+    return limiter(req, res, next)
+})
 
 const bootstrap = async () => {
     try {

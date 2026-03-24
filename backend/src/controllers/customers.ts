@@ -7,6 +7,7 @@ import NotFoundError from '../errors/not-found-error'
 import Order from '../models/order'
 import User, { IUser } from '../models/user'
 import { sanitizeObject } from '../utils/sanitize'
+import ForbiddenError from '../errors/forbidden-error'
 
 export const getCustomers = async (
     req: Request,
@@ -14,6 +15,9 @@ export const getCustomers = async (
     next: NextFunction
 ) => {
     try {
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен'))
+        }
         const {
             page = 1,
             limit = 10,
@@ -46,6 +50,10 @@ export const getCustomers = async (
 
         if (search && typeof search === 'string' && search.length > 100) {
             return next(new BadRequestError('Слишком длинный поисковый запрос'))
+        }
+
+        if (search && typeof search !== 'string') {
+            return next(new BadRequestError('Некорректный поиск'))
         }
 
         const filters: FilterQuery<Partial<IUser>> = {}
@@ -112,7 +120,7 @@ export const getCustomers = async (
 
         if (search) {
             const safeSearch = escapeStringRegexp(search as string)
-            const searchRegex = new RegExp(`^${safeSearch}`, 'i')
+            const searchRegex = new RegExp(safeSearch, 'i')
 
             const orders = await Order.find(
                 {
