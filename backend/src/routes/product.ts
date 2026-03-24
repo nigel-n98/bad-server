@@ -7,9 +7,9 @@ import {
 } from '../controllers/products'
 import auth, { roleGuardMiddleware } from '../middlewares/auth'
 import {
-    validateObjId,
     validateProductBody,
     validateProductUpdateBody,
+    validateObjectIdParam,
 } from '../middlewares/validations'
 import { Role } from '../models/user'
 
@@ -27,14 +27,14 @@ productRouter.delete(
     '/:productId',
     auth,
     roleGuardMiddleware(Role.Admin),
-    validateObjId,
+    validateObjectIdParam('productId'),
     deleteProduct
 )
 productRouter.patch(
     '/:productId',
     auth,
     roleGuardMiddleware(Role.Admin),
-    validateObjId,
+    validateObjectIdParam('productId'),
     validateProductUpdateBody,
     updateProduct
 )

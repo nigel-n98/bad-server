@@ -137,7 +137,7 @@ export default function AdminCustomers() {
             </div>
 
             <Table columns={customersColumns} data={customers}>
-                {({ rowData, columnsData }) => {
+                {({ rowData, columnsData, rowIndex }) => {
                     return (
                         <Link
                             key={rowData.key}
@@ -148,6 +148,7 @@ export default function AdminCustomers() {
                             <TableRow
                                 rowData={rowData}
                                 columnsData={columnsData}
+                                rowIndex={rowIndex}
                             />
                         </Link>
                     )

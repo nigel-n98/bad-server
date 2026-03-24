@@ -6,6 +6,7 @@ import styles from './table.module.scss'
 interface TableChildrenProps {
     rowData: DataRow
     columnsData: Column[]
+    rowIndex: number
 }
 
 interface TableProps {
@@ -32,8 +33,8 @@ const Table = ({ columns, data, children }: TableProps) => {
                 ))}
             </div>
             <div className={styles.table__body}>
-                {data.map((row) =>
-                    children({ rowData: row, columnsData: columns })
+                {data.map((row, rowIndex) =>
+                    children({ rowData: row, columnsData: columns, rowIndex })
                 )}
             </div>
         </div>

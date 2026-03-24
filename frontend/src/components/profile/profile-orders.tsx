@@ -5,7 +5,6 @@ import TableRow from '@components/table/table-row'
 import { OrderDataList } from '@slices/orders/type'
 import { profileOrdersSelector } from '@slices/profile-orders'
 import { fetchOrdersMeWithFilters } from '@slices/profile-orders/thunk'
-import { useDispatch } from '@store/hooks'
 import clsx from 'clsx'
 import { ChangeEvent, FormEvent, useCallback, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
@@ -15,7 +14,6 @@ import usePagination from '../pagination/helpers/usePagination'
 import styles from './profile.module.scss'
 
 export default function ProfileOrders() {
-    const dispatch = useDispatch()
     const location = useLocation()
     // const orders = useSelector(profileOrdersSelector.selectProfileOrders);
     const [searchParams, setSearchParams] = useSearchParams()
@@ -43,9 +41,9 @@ export default function ProfileOrders() {
             extraClassTableCell: styles.profile__tableCellSmall,
             dataIndex: 'orderNumber',
             key: 'orderNumber',
-            render: (row: OrderDataList) => (
+            render: (_row: OrderDataList, rowIndex: number) => (
                 <span className={styles.profile__tableCellSecondary}>
-                    {row.orderNumber.title}.
+                    {(currentPage - 1) * limit + rowIndex + 1}.
                 </span>
             ),
         },
@@ -99,7 +97,7 @@ export default function ProfileOrders() {
             })
             setSearchParams({ ...filters, search: value })
         },
-        [searchParams, dispatch, setSearchParams]
+        [searchParams, setSearchParams]
     )
 
     return (
@@ -126,7 +124,7 @@ export default function ProfileOrders() {
                 <Button>Найти</Button>
             </form>
             <Table columns={orderColumns} data={orders}>
-                {({ rowData, columnsData }) => {
+                {({ rowData, columnsData, rowIndex }) => {
                     return (
                         <Link
                             key={rowData.key}
@@ -137,6 +135,7 @@ export default function ProfileOrders() {
                             <TableRow
                                 rowData={rowData}
                                 columnsData={columnsData}
+                                rowIndex={rowIndex}
                             />
                         </Link>
                     )

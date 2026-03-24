@@ -3,28 +3,50 @@ import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import jwt, { JwtPayload } from 'jsonwebtoken'
 import { Error as MongooseError } from 'mongoose'
+import sanitizeHtml from 'sanitize-html'
+
 import { REFRESH_TOKEN } from '../config'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
-import User from '../models/user'
+import User, { IUser } from '../models/user'
 
-// POST /auth/login
+function sanitizeUser(user: IUser) {
+    return {
+        _id: user._id,
+        email: sanitizeHtml(user.email || ''),
+        name: sanitizeHtml(user.name || ''),
+        roles: user.roles,
+    }
+}
+
 const login = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { email, password } = req.body
-        const user = await User.findUserByCredentials(email, password)
+
+        if (typeof email !== 'string' || typeof password !== 'string') {
+            return next(new BadRequestError('Некорректные данные'))
+        }
+
+        const cleanEmail = sanitizeHtml(email).toLowerCase().trim()
+
+        const user = await User.findUserByCredentials(cleanEmail, password)
+
         const accessToken = user.generateAccessToken()
         const refreshToken = await user.generateRefreshToken()
+
         res.cookie(
             REFRESH_TOKEN.cookie.name,
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
+
+        const safeUser = sanitizeUser(user)
+
         return res.json({
             success: true,
-            user,
+            user: safeUser,
             accessToken,
         })
     } catch (err) {
@@ -32,12 +54,25 @@ const login = async (req: Request, res: Response, next: NextFunction) => {
     }
 }
 
-// POST /auth/register
 const register = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { email, password, name } = req.body
-        const newUser = new User({ email, password, name })
+
+        const cleanEmail = sanitizeHtml(email).toLowerCase().trim()
+        const cleanName = sanitizeHtml(name)
+
+        if (!cleanEmail || !password) {
+            return next(new BadRequestError('Некорректные данные'))
+        }
+
+        const newUser = new User({
+            email: cleanEmail,
+            password,
+            name: cleanName,
+        })
+
         await newUser.save()
+
         const accessToken = newUser.generateAccessToken()
         const refreshToken = await newUser.generateRefreshToken()
 
@@ -46,9 +81,12 @@ const register = async (req: Request, res: Response, next: NextFunction) => {
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
+
+        const safeUser = sanitizeUser(newUser)
+
         return res.status(constants.HTTP_STATUS_CREATED).json({
             success: true,
-            user: newUser,
+            user: safeUser,
             accessToken,
         })
     } catch (error) {
@@ -64,7 +102,6 @@ const register = async (req: Request, res: Response, next: NextFunction) => {
     }
 }
 
-// GET /auth/user
 const getCurrentUser = async (
     _req: Request,
     res: Response,
@@ -72,91 +109,84 @@ const getCurrentUser = async (
 ) => {
     try {
         const userId = res.locals.user._id
+
         const user = await User.findById(userId).orFail(
             () =>
                 new NotFoundError(
                     'Пользователь по заданному id отсутствует в базе'
                 )
         )
-        res.json({ user, success: true })
+
+        const safeUser = sanitizeUser(user)
+
+        return res.json({ user: safeUser, success: true })
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
-// Можно лучше: вынести общую логику получения данных из refresh токена
-const deleteRefreshTokenInUser = async (
-    req: Request,
-    _res: Response,
-    _next: NextFunction
-) => {
-    const { cookies } = req
-    const rfTkn = cookies[REFRESH_TOKEN.cookie.name]
+const deleteRefreshTokenInUser = async (req: Request) => {
+    const rfTkn = req.cookies[REFRESH_TOKEN.cookie.name]
 
     if (!rfTkn) {
         throw new UnauthorizedError('Не валидный токен')
     }
 
-    const decodedRefreshTkn = jwt.verify(
-        rfTkn,
-        REFRESH_TOKEN.secret
-    ) as JwtPayload
-    const user = await User.findOne({
-        _id: decodedRefreshTkn._id,
-    }).orFail(() => new UnauthorizedError('Пользователь не найден в базе'))
+    const decoded = jwt.verify(rfTkn, REFRESH_TOKEN.secret) as JwtPayload
 
-    const rTknHash = crypto
+    const user = await User.findById(decoded._id).orFail(
+        () => new UnauthorizedError('Пользователь не найден')
+    )
+
+    const tokenHash = crypto
         .createHmac('sha256', REFRESH_TOKEN.secret)
         .update(rfTkn)
         .digest('hex')
 
-    user.tokens = user.tokens.filter((tokenObj) => tokenObj.token !== rTknHash)
+    user.tokens = user.tokens.filter((t) => t.token !== tokenHash)
 
     await user.save()
 
     return user
 }
 
-// Реализация удаления токена из базы может отличаться
-// GET  /auth/logout
 const logout = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        await deleteRefreshTokenInUser(req, res, next)
-        const expireCookieOptions = {
+        await deleteRefreshTokenInUser(req)
+
+        res.cookie(REFRESH_TOKEN.cookie.name, '', {
             ...REFRESH_TOKEN.cookie.options,
-            maxAge: -1,
-        }
-        res.cookie(REFRESH_TOKEN.cookie.name, '', expireCookieOptions)
-        res.status(200).json({
-            success: true,
+            maxAge: 0,
         })
+
+        return res.status(200).json({ success: true })
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
-// GET  /auth/token
 const refreshAccessToken = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        const userWithRefreshTkn = await deleteRefreshTokenInUser(
-            req,
-            res,
-            next
-        )
-        const accessToken = await userWithRefreshTkn.generateAccessToken()
-        const refreshToken = await userWithRefreshTkn.generateRefreshToken()
+        const user = await deleteRefreshTokenInUser(req)
+
+        const accessToken = user.generateAccessToken()
+        const refreshToken = await user.generateRefreshToken()
+
         res.cookie(
             REFRESH_TOKEN.cookie.name,
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
+
+        const safeUser = sanitizeUser(user)
+
         return res.json({
             success: true,
-            user: userWithRefreshTkn,
+            user: safeUser,
             accessToken,
         })
     } catch (error) {
@@ -165,23 +195,18 @@ const refreshAccessToken = async (
 }
 
 const getCurrentUserRoles = async (
-    req: Request,
+    _req: Request,
     res: Response,
     next: NextFunction
 ) => {
-    const userId = res.locals.user._id
     try {
-        await User.findById(userId, req.body, {
-            new: true,
-        }).orFail(
-            () =>
-                new NotFoundError(
-                    'Пользователь по заданному id отсутствует в базе'
-                )
+        const user = await User.findById(res.locals.user._id).orFail(
+            () => new NotFoundError('Пользователь по заданному id отсутствует')
         )
-        res.status(200).json(res.locals.user.roles)
+
+        return res.status(200).json(user.roles)
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
@@ -190,28 +215,38 @@ const updateCurrentUser = async (
     res: Response,
     next: NextFunction
 ) => {
-    const userId = res.locals.user._id
     try {
-        const updatedUser = await User.findByIdAndUpdate(userId, req.body, {
-            new: true,
-        }).orFail(
-            () =>
-                new NotFoundError(
-                    'Пользователь по заданному id отсутствует в базе'
-                )
+        const userId = res.locals.user._id
+        const { name, email, phone } = req.body
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            {
+                ...(name && { name: sanitizeHtml(name) }),
+                ...(email && {
+                    email: sanitizeHtml(email).toLowerCase().trim(),
+                }),
+                ...(phone && { phone: sanitizeHtml(phone) }),
+            },
+            { new: true, runValidators: true }
+        ).orFail(
+            () => new NotFoundError('Пользователь по заданному id отсутствует')
         )
-        res.status(200).json(updatedUser)
+
+        const safeUser = sanitizeUser(updatedUser)
+
+        return res.status(200).json(safeUser)
     } catch (error) {
-        next(error)
+        return next(error)
     }
 }
 
 export {
-    getCurrentUser,
-    getCurrentUserRoles,
     login,
+    register,
+    getCurrentUser,
     logout,
     refreshAccessToken,
-    register,
+    getCurrentUserRoles,
     updateCurrentUser,
 }

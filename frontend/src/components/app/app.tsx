@@ -35,8 +35,10 @@ import LogoutPage from '@pages/logout'
 import MainPage from '@pages/main'
 import ProfilePage from '@pages/profile'
 import RegisterPage from '@pages/register/register-page'
+import { basketActions } from '@slices/basket'
+import { userSelectors } from '@slices/user'
 import { userActions } from '@slices/user'
-import { useActionCreators } from '@store/hooks'
+import { useActionCreators, useSelector } from '@store/hooks'
 import store, { persistor } from '@store/store'
 import { PropsWithChildren, useEffect } from 'react'
 import { Provider } from 'react-redux'
@@ -62,6 +64,9 @@ const RouteComponent = () => {
     const location = useLocation()
     const navigate = useNavigate()
     const { authCheck, checkUserAuth } = useActionCreators(userActions)
+    const { resetBasket } = useActionCreators(basketActions)
+    const user = useSelector(userSelectors.getUser)
+    const isAuthChecked = useSelector(userSelectors.getIsAuthChecked)
     const handleModalClose = (path: To | number) => () => navigate(path as To)
 
     useEffect(() => {
@@ -69,6 +74,16 @@ const RouteComponent = () => {
             .unwrap()
             .finally(() => authCheck())
     }, [checkUserAuth, authCheck])
+
+    useEffect(() => {
+        if (!isAuthChecked) {
+            return
+        }
+
+        if (!user) {
+            resetBasket()
+        }
+    }, [isAuthChecked, user, resetBasket])
 
     const locationState = location.state as { background?: Location }
     const background = locationState && locationState.background

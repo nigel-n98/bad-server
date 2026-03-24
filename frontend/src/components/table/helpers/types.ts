@@ -5,7 +5,7 @@ export interface Column {
     extraClassHeaderCell?: string
     extraClassTableCell?: string
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    render?: (row: any) => JSX.Element
+    render?: (row: any, rowIndex: number) => JSX.Element
 }
 
 export interface DataRow {

@@ -1,18 +1,23 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery } from 'mongoose'
+import sanitizeHtml from 'sanitize-html'
+import escapeStringRegexp from 'escape-string-regexp'
+import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order from '../models/order'
 import User, { IUser } from '../models/user'
+import { sanitizeObject } from '../utils/sanitize'
+import ForbiddenError from '../errors/forbidden-error'
 
-// TODO: Добавить guard admin
-// eslint-disable-next-line max-len
-// Get GET /customers?page=2&limit=5&sort=totalAmount&order=desc&registrationDateFrom=2023-01-01&registrationDateTo=2023-12-31&lastOrderDateFrom=2023-01-01&lastOrderDateTo=2023-12-31&totalAmountFrom=100&totalAmountTo=1000&orderCountFrom=1&orderCountTo=10
 export const getCustomers = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен'))
+        }
         const {
             page = 1,
             limit = 10,
@@ -28,6 +33,28 @@ export const getCustomers = async (
             orderCountTo,
             search,
         } = req.query
+
+        const pageNumber = Number(page)
+
+        let limitNumber = Number(limit)
+
+        if (Number.isNaN(limitNumber) || limitNumber <= 0) {
+            limitNumber = 10
+        }
+
+        limitNumber = Math.min(limitNumber, 10)
+
+        if (Number.isNaN(pageNumber) || Number.isNaN(limitNumber)) {
+            return next(new BadRequestError('Некорректные параметры пагинации'))
+        }
+
+        if (search && typeof search === 'string' && search.length > 100) {
+            return next(new BadRequestError('Слишком длинный поисковый запрос'))
+        }
+
+        if (search && typeof search !== 'string') {
+            return next(new BadRequestError('Некорректный поиск'))
+        }
 
         const filters: FilterQuery<Partial<IUser>> = {}
 
@@ -92,7 +119,9 @@ export const getCustomers = async (
         }
 
         if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
+            const safeSearch = escapeStringRegexp(search as string)
+            const searchRegex = new RegExp(safeSearch, 'i')
+
             const orders = await Order.find(
                 {
                     $or: [{ deliveryAddress: searchRegex }],
@@ -108,16 +137,30 @@ export const getCustomers = async (
             ]
         }
 
-        const sort: { [key: string]: any } = {}
+        const allowedSortFields = [
+            'createdAt',
+            'totalAmount',
+            'orderCount',
+            'lastOrderDate',
+        ]
 
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
+        const allowedSortOrders = ['asc', 'desc']
+
+        if (!allowedSortFields.includes(sortField as string)) {
+            return next(new BadRequestError('Недопустимое поле сортировки'))
         }
+
+        if (!allowedSortOrders.includes(sortOrder as string)) {
+            return next(new BadRequestError('Недопустимый порядок сортировки'))
+        }
+
+        const sort: { [key: string]: any } = {}
+        sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
 
         const options = {
             sort,
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip: (pageNumber - 1) * limitNumber,
+            limit: limitNumber,
         }
 
         const users = await User.find(filters, null, options).populate([
@@ -137,15 +180,15 @@ export const getCustomers = async (
         ])
 
         const totalUsers = await User.countDocuments(filters)
-        const totalPages = Math.ceil(totalUsers / Number(limit))
+        const totalPages = Math.ceil(totalUsers / limitNumber)
 
         res.status(200).json({
-            customers: users,
+            customers: sanitizeObject(users),
             pagination: {
                 totalUsers,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: pageNumber,
+                pageSize: limitNumber,
             },
         })
     } catch (error) {
@@ -153,37 +196,51 @@ export const getCustomers = async (
     }
 }
 
-// TODO: Добавить guard admin
-// Get /customers/:id
 export const getCustomerById = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        const user = await User.findById(req.params.id).populate([
-            'orders',
-            'lastOrder',
-        ])
-        res.status(200).json(user)
+        const user = await User.findById(req.params.id)
+            .populate(['orders', 'lastOrder'])
+            .orFail(
+                () =>
+                    new NotFoundError(
+                        'Пользователь по заданному id отсутствует в базе'
+                    )
+            )
+
+        res.status(200).json(sanitizeObject(user))
     } catch (error) {
         next(error)
     }
 }
 
-// TODO: Добавить guard admin
-// Patch /customers/:id
 export const updateCustomer = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
+        const { name, email, phone } = req.body
+
+        const cleanName = name ? sanitizeHtml(name) : undefined
+        const cleanEmail = email
+            ? sanitizeHtml(email).toLowerCase().trim()
+            : undefined
+        const cleanPhone = phone ? sanitizeHtml(phone) : undefined
+
         const updatedUser = await User.findByIdAndUpdate(
             req.params.id,
-            req.body,
+            {
+                ...(cleanName && { name: cleanName }),
+                ...(cleanEmail && { email: cleanEmail }),
+                ...(cleanPhone && { phone: cleanPhone }),
+            },
             {
                 new: true,
+                runValidators: true,
             }
         )
             .orFail(
@@ -193,14 +250,13 @@ export const updateCustomer = async (
                     )
             )
             .populate(['orders', 'lastOrder'])
-        res.status(200).json(updatedUser)
+
+        res.status(200).json(sanitizeObject(updatedUser))
     } catch (error) {
         next(error)
     }
 }
 
-// TODO: Добавить guard admin
-// Delete /customers/:id
 export const deleteCustomer = async (
     req: Request,
     res: Response,
@@ -213,7 +269,8 @@ export const deleteCustomer = async (
                     'Пользователь по заданному id отсутствует в базе'
                 )
         )
-        res.status(200).json(deletedUser)
+
+        res.status(200).json(sanitizeObject(deletedUser))
     } catch (error) {
         next(error)
     }

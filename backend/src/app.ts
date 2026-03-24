@@ -5,36 +5,43 @@ import 'dotenv/config'
 import express, { json, urlencoded } from 'express'
 import mongoose from 'mongoose'
 import path from 'path'
-import { DB_ADDRESS } from './config'
+import rateLimit from 'express-rate-limit'
 import errorHandler from './middlewares/error-handler'
 import serveStatic from './middlewares/serverStatic'
 import routes from './routes'
+import { DB_ADDRESS, ORIGIN_ALLOW, PORT } from './config'
 
-const { PORT = 3000 } = process.env
 const app = express()
 
 app.use(cookieParser())
-
-app.use(cors())
-// app.use(cors({ origin: ORIGIN_ALLOW, credentials: true }));
-// app.use(express.static(path.join(__dirname, 'public')));
-
+app.use(cors({ origin: ORIGIN_ALLOW, credentials: true }))
 app.use(serveStatic(path.join(__dirname, 'public')))
+app.use(urlencoded({ extended: true, limit: '10kb' }))
+app.use(json({ limit: '10kb' }))
 
-app.use(urlencoded({ extended: true }))
-app.use(json())
+const limiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+})
 
-app.options('*', cors())
-app.use(routes)
-app.use(errors())
-app.use(errorHandler)
-
-// eslint-disable-next-line no-console
+app.use((req, res, next) => {
+    if (req.path === '/auth/csrf-token') {
+        return next()
+    }
+    return limiter(req, res, next)
+})
 
 const bootstrap = async () => {
     try {
         await mongoose.connect(DB_ADDRESS)
-        await app.listen(PORT, () => console.log('ok'))
+
+        app.use(routes)
+        app.use(errors())
+        app.use(errorHandler)
+
+        app.listen(PORT, () => console.log(`Server started on port ${PORT}`))
     } catch (error) {
         console.error(error)
     }
