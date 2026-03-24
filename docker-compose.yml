@@ -25,8 +25,18 @@ services:
     restart: always
     build:
       context: backend
-    env_file:
-      - backend/.env
+    environment:
+      PORT: 3000
+      DB_ADDRESS: mongodb://root:example@mongo:27017/weblarek?authSource=admin
+      UPLOAD_PATH: images
+      UPLOAD_PATH_TEMP: temp
+      ORIGIN_ALLOW: http://localhost:5173
+      AUTH_ACCESS_TOKEN_EXPIRY: 15m
+      AUTH_REFRESH_TOKEN_EXPIRY: 7d
+      RATE_LIMITED: "true"
+      RATE_LIMIT_POINTS: 3
+      RATE_LIMIT_DURATION: 5
+      RATE_LIMIT_BLOCK: 15
     command: npm run start
     volumes:
       - ./backend/src:/app/src

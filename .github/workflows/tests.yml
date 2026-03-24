@@ -22,9 +22,6 @@ jobs:
         node-version: 18.x
     - name: Get testing lib
       run: set -eu && git clone --depth 1 $REP_TESTS $DIR_TESTS
-    - name: Create frontend env
-      run: |
-        echo "VITE_API_ORIGIN=http://localhost:3000" > frontend/.env
     - name: Start project
       run: bash $DIR_TESTS/bin/start_project.sh
     - name: Run tests
