@@ -86,11 +86,12 @@ import 'dotenv/config'
 import express, { json, urlencoded } from 'express'
 import mongoose from 'mongoose'
 import path from 'path'
-
+import rateLimit from 'express-rate-limit'//тут
 import errorHandler from './middlewares/error-handler'
 import serveStatic from './middlewares/serverStatic'
 import routes from './routes'
 import { DB_ADDRESS, ORIGIN_ALLOW, PORT } from './config'
+
 
 const app = express()
 
@@ -100,9 +101,19 @@ app.use(serveStatic(path.join(__dirname, 'public')))
 app.use(urlencoded({ extended: true, limit: '10kb' }))
 app.use(json({ limit: '10kb' }))
 
+const limiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+})
+
+app.use(limiter)//тут
+
 const bootstrap = async () => {
     try {
         await mongoose.connect(DB_ADDRESS)
+
         app.use(routes)
         app.use(errors())
         app.use(errorHandler)
