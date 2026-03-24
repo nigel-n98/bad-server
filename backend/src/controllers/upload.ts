@@ -9,15 +9,14 @@ export const uploadFile = async (
 ) => {
     try {
         if (!req.file) {
-            
             return next(
                 new BadRequestError('Файл не загружен или не прошёл проверку')
             )
         }
 
         if (req.file && req.file.size < 2 * 1024) {
-    return next(new BadRequestError('Файл слишком маленький'))
-}
+            return next(new BadRequestError('Файл слишком маленький'))
+        }
 
         const fileName = process.env.UPLOAD_PATH
             ? `/${process.env.UPLOAD_PATH}/${req.file.filename}`

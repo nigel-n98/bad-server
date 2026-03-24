@@ -31,15 +31,14 @@ export const getCustomers = async (
         } = req.query
 
         const pageNumber = Number(page)
-        // const limitNumber = Number(limit)
 
-        let limitNumber = Number(limit) //тут
+        let limitNumber = Number(limit)
 
-if (Number.isNaN(limitNumber) || limitNumber <= 0) { //тут
-    limitNumber = 10
-}
+        if (Number.isNaN(limitNumber) || limitNumber <= 0) {
+            limitNumber = 10
+        }
 
-limitNumber = Math.min(limitNumber, 10) // тут
+        limitNumber = Math.min(limitNumber, 10)
 
         if (Number.isNaN(pageNumber) || Number.isNaN(limitNumber)) {
             return next(new BadRequestError('Некорректные параметры пагинации'))

@@ -13,9 +13,9 @@ export const getOrders = async (
     res: Response,
     next: NextFunction
 ) => {
-    if (JSON.stringify(req.query).includes('$')) { //тут
-    return next(new BadRequestError('Запрещенные операторы'))
-}
+    if (JSON.stringify(req.query).includes('$')) {
+        return next(new BadRequestError('Запрещенные операторы'))
+    }
     try {
         const {
             page = 1,
@@ -31,15 +31,14 @@ export const getOrders = async (
         } = req.query
 
         const pageNumber = Number(page)
-        // const limitNumber = Number(limit)
-        let limitNumber = Number(limit)//тут
 
-if (Number.isNaN(limitNumber) || limitNumber <= 0) { //тут
-    limitNumber = 10
-}
+        let limitNumber = Number(limit)
 
-limitNumber = Math.min(limitNumber, 10)//тут
+        if (Number.isNaN(limitNumber) || limitNumber <= 0) {
+            limitNumber = 10
+        }
 
+        limitNumber = Math.min(limitNumber, 10)
 
         if (Number.isNaN(pageNumber) || Number.isNaN(limitNumber)) {
             return next(new BadRequestError('Некорректные параметры пагинации'))
@@ -135,8 +134,7 @@ limitNumber = Math.min(limitNumber, 10)//тут
             { $unwind: '$products' },
         ]
 
-        // if (search) {
-        if (search && typeof search === 'string'){
+        if (search && typeof search === 'string') {
             const safeSearch = escapeStringRegexp(search as string)
             const searchRegex = new RegExp(`^${safeSearch}`, 'i')
             const searchNumber = Number(search)
